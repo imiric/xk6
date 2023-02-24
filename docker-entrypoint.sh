@@ -3,4 +3,4 @@ set -e
 
 eval "$(fixuid)"
 
-exec /go/bin/xk6 "$@"
+exec /usr/local/bin/xk6 "$@"
