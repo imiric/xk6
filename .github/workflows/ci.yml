@@ -44,6 +44,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       short_sha: ${{ steps.vars.outputs.short_sha }}
+      version: ${{ steps.vars.outputs.version }}
 
     steps:
     # - name: Install Go
@@ -54,7 +55,7 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Print Go version and environment
+    - name: Show environment and set variables
       id: vars
       shell: bash
       run: |
@@ -67,6 +68,7 @@ jobs:
         # Calculate the short SHA1 hash of the git commit
         echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
         echo "go_cache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
+        echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
     # - name: Cache the build cache
     #   uses: actions/cache@v3
@@ -123,14 +125,15 @@ jobs:
     runs-on: ubuntu-latest
     needs: [test]
     env:
-      VERSION: ${{ needs.test.outputs.short_sha }}
+      SHORT_SHA: ${{ needs.test.outputs.short_sha }}
+      VERSION: ${{ needs.test.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
       - name: Build image
-        run: docker build --build-arg "XK6_VERSION=${VERSION}" -t "$DOCKER_IMAGE_REPOSITORY" .
+        run: docker build --build-arg "XK6_VERSION=${SHORT_SHA}" -t "$DOCKER_IMAGE_REPOSITORY" .
       - name: Build k6 binary
         run: |
             docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/xk6" \
@@ -142,30 +145,32 @@ jobs:
             ./k6 version
             ./k6 version | grep -qz 'xk6-output-influxdb.*xk6-kafka'
 
-      # - name: Log into ghcr.io
-      #   if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
-      #   run: |
-      #     # Log into GitHub Container Registry
-      #     echo "${{ secrets.GITHUB_TOKEN }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
-      # - name: Publish k6:master image to ghcr.io
-      #   if: ${{ github.ref == 'refs/heads/master' }}
-      #   run: |
-      #     echo "Publish as ghcr.io/$GHCR_IMAGE_ID:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_ID" "ghcr.io/$GHCR_IMAGE_ID:master"
-      #     docker push "ghcr.io/$GHCR_IMAGE_ID:master"
-      # - name: Publish tagged version image to ghcr.io
-      #   if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-      #   run: |
-      #     VERSION="${VERSION#v}"
-      #     echo "Publish as ghcr.io/$GHCR_IMAGE_ID:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_ID" "ghcr.io/$GHCR_IMAGE_ID:$VERSION"
-      #     docker push "ghcr.io/$GHCR_IMAGE_ID:$VERSION"
-      #     # We also want to tag the latest stable version as latest
-      #     if [[ ! "$VERSION" =~ (RC|rc) ]]; then
-      #       echo "Publish as ghcr.io/$GHCR_IMAGE_ID:latest"
-      #       docker tag "$DOCKER_IMAGE_ID" "ghcr.io/$GHCR_IMAGE_ID:latest"
-      #       docker push "ghcr.io/$GHCR_IMAGE_ID:latest"
-      #     fi
+      - name: Log into ghcr.io
+        if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # Log into GitHub Container Registry
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Publish master image to ghcr.io
+        if: ${{ github.ref == 'refs/heads/master' }}
+        run: |
+          echo "Publish as ghcr.io/$DOCKER_IMAGE_REPOSITORY:$VERSION"
+          docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/$DOCKER_IMAGE_REPOSITORY:master"
+          docker push "ghcr.io/$DOCKER_IMAGE_REPOSITORY:master"
+
+      - name: Publish tagged version image to ghcr.io
+        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          VERSION="${VERSION#v}"
+          echo "Publish as ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
+          docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
+          docker push "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
+          # We also want to tag the latest stable version as latest
+          if [[ ! "$VERSION" =~ (RC|rc) ]]; then
+            echo "Publish as ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
+            docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
+            docker push "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
+          fi
 
       # - name: Log into Docker Hub
       #   if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
@@ -175,28 +180,28 @@ jobs:
       # - name: Publish k6:master image to Docker Hub
       #   if: ${{ github.ref == 'refs/heads/master' }}
       #   run: |
-      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_ID:master and $LI_DOCKER_IMAGE_ID:master"
-      #     docker tag "$DOCKER_IMAGE_ID" "$DOCKER_IMAGE_ID:master"
-      #     docker tag "$DOCKER_IMAGE_ID" "$LI_DOCKER_IMAGE_ID:master"
-      #     docker push "$DOCKER_IMAGE_ID:master"
-      #     docker push "$LI_DOCKER_IMAGE_ID:master"
+      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:master and $LI_DOCKER_IMAGE_REPOSITORY:master"
+      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:master"
+      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:master"
+      #     docker push "$DOCKER_IMAGE_REPOSITORY:master"
+      #     docker push "$LI_DOCKER_IMAGE_REPOSITORY:master"
       # - name: Publish tagged version image to Docker Hub
       #   if: ${{ startsWith(github.ref, 'refs/tags/v') }}
       #   run: |
       #     # We need to push the same image in both the loadimpact and the grafana docker hub orgs
       #     VERSION="${VERSION#v}"
-      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_ID:$VERSION and $LI_DOCKER_IMAGE_ID:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_ID" "$DOCKER_IMAGE_ID:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_ID" "$LI_DOCKER_IMAGE_ID:$VERSION"
-      #     docker push "$DOCKER_IMAGE_ID:$VERSION"
-      #     docker push "$LI_DOCKER_IMAGE_ID:$VERSION"
+      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:$VERSION and $LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
+      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:$VERSION"
+      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
+      #     docker push "$DOCKER_IMAGE_REPOSITORY:$VERSION"
+      #     docker push "$LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
       #     # We also want to tag the latest stable version as latest
       #     if [[ ! "$VERSION" =~ (RC|rc) ]]; then
-      #       echo "Publish to Docker Hub as $DOCKER_IMAGE_ID:latest and $LI_DOCKER_IMAGE_ID:latest"
-      #       docker tag "$DOCKER_IMAGE_ID" "$DOCKER_IMAGE_ID:latest"
-      #       docker tag "$DOCKER_IMAGE_ID" "$LI_DOCKER_IMAGE_ID:latest"
-      #       docker push "$DOCKER_IMAGE_ID:latest"
-      #       docker push "$LI_DOCKER_IMAGE_ID:latest"
+      #       echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:latest and $LI_DOCKER_IMAGE_REPOSITORY:latest"
+      #       docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:latest"
+      #       docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:latest"
+      #       docker push "$DOCKER_IMAGE_REPOSITORY:latest"
+      #       docker push "$LI_DOCKER_IMAGE_REPOSITORY:latest"
       #     fi
 
   # goreleaser-check:
