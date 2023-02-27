@@ -6,13 +6,9 @@ on:
   push:
     branches:
       - master
-      - feat/docker-image-publish
   pull_request:
     branches:
       - master
-
-env:
-  DOCKER_IMAGE_REPOSITORY: ${{ github.repository }}
 
 jobs:
   test:
@@ -20,36 +16,33 @@ jobs:
       # Default is true, cancels jobs for other platforms in the matrix if one fails
       fail-fast: false
       matrix:
-        # os: [ ubuntu-latest, macos-latest, windows-latest ]
-        # go-version: [ 1.18.x, 1.19.x ]
-        go-version: [ 1.19.x ]
+        os: [ ubuntu-latest, macos-latest, windows-latest ]
+        go-version: [ 1.18.x, 1.19.x ]
 
         # Set some variables per OS, usable via ${{ matrix.VAR }}
         # XK6_BIN_PATH: the path to the compiled k6 binary, for artifact publishing
         # SUCCESS: the typical value for $? per OS (Windows/pwsh returns 'True')
-        # include:
-        # - os: ubuntu-latest
-        #   XK6_BIN_PATH: ./cmd/xk6/xk6
-        #   SUCCESS: 0
+        include:
+        - os: ubuntu-latest
+          XK6_BIN_PATH: ./cmd/xk6/xk6
+          SUCCESS: 0
 
-        # - os: macos-latest
-        #   XK6_BIN_PATH: ./cmd/xk6/xk6
-        #   SUCCESS: 0
+        - os: macos-latest
+          XK6_BIN_PATH: ./cmd/xk6/xk6
+          SUCCESS: 0
 
-        # - os: windows-latest
-        #   XK6_BIN_PATH: ./cmd/xk6/xk6.exe
-        #   SUCCESS: 'True'
+        - os: windows-latest
+          XK6_BIN_PATH: ./cmd/xk6/xk6.exe
+          SUCCESS: 'True'
 
     # runs-on: ${{ matrix.os }}
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.vars.outputs.version }}
 
     steps:
-    # - name: Install Go
-    #   uses: actions/setup-go@v3
-    #   with:
-    #     go-version: ${{ matrix.go-version }}
+    - name: Install Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: ${{ matrix.go-version }}
 
     - name: Checkout code
       uses: actions/checkout@v3
@@ -67,149 +60,66 @@ jobs:
         # Calculate the short SHA1 hash of the git commit
         echo "short_sha=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
         echo "go_cache=$(go env GOCACHE)" >> $GITHUB_OUTPUT
-        echo "version=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
-    # - name: Cache the build cache
-    #   uses: actions/cache@v3
-    #   with:
-    #     path: ${{ steps.vars.outputs.go_cache }}
-    #     key: ${{ runner.os }}-go-ci-${{ hashFiles('**/go.sum') }}
-    #     restore-keys: |
-    #       ${{ runner.os }}-go-ci
+    - name: Cache the build cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ steps.vars.outputs.go_cache }}
+        key: ${{ runner.os }}-go-ci-${{ hashFiles('**/go.sum') }}
+        restore-keys: |
+          ${{ runner.os }}-go-ci
 
-    # - name: Get dependencies
-    #   run: |
-    #     go get -v -t -d ./...
+    - name: Get dependencies
+      run: |
+        go get -v -t -d ./...
 
-    # - name: Build xk6
-    #   working-directory: ./cmd/xk6
-    #   env:
-    #     CGO_ENABLED: 0
-    #   run: |
-    #     go build -trimpath -ldflags="-w -s" -v
+    - name: Build xk6
+      working-directory: ./cmd/xk6
+      env:
+        CGO_ENABLED: 0
+      run: |
+        go build -trimpath -ldflags="-w -s" -v
 
-    # - name: Publish Build Artifact
-    #   uses: actions/upload-artifact@v3
-    #   with:
-    #     name: xk6_${{ runner.os }}_${{ steps.vars.outputs.short_sha }}
-    #     path: ${{ matrix.XK6_BIN_PATH }}
+    - name: Publish Build Artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: xk6_${{ runner.os }}_${{ steps.vars.outputs.short_sha }}
+        path: ${{ matrix.XK6_BIN_PATH }}
 
-    # - name: Run tests
-    #   run: |
-    #     go test -v -coverprofile="cover-profile.out" -short -race ./...
+    - name: Run tests
+      run: |
+        go test -v -coverprofile="cover-profile.out" -short -race ./...
 
-  # golangci-lint:
-  #   name: runner / golangci-lint
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: Checkout code
-  #       uses: actions/checkout@v3
-  #       with:
-  #         fetch-depth: 0
-  #     - name: Install Go
-  #       uses: actions/setup-go@v3
-  #       with:
-  #         go-version: 1.19.x
-  #         check-latest: true
-  #     - name: Retrieve golangci-lint version
-  #       run: |
-  #         echo "Version=$(head -n 1 "${GITHUB_WORKSPACE}/.golangci.yml" | tr -d '# ')" >> $GITHUB_OUTPUT
-  #       id: version
-  #     - name: golangci-lint
-  #       uses: golangci/golangci-lint-action@v3
-  #       with:
-  #         version: ${{ steps.version.outputs.Version }}
-
-  docker:
+  golangci-lint:
+    name: runner / golangci-lint
     runs-on: ubuntu-latest
-    needs: [test]
-    env:
-      VERSION: ${{ needs.test.outputs.version }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      - name: Build image
-        run: docker build -t "$DOCKER_IMAGE_REPOSITORY" .
-      - name: Build k6 binary
+      - name: Install Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.19.x
+          check-latest: true
+      - name: Retrieve golangci-lint version
         run: |
-            docker run --rm -u "$(id -u):$(id -g)" -v "$PWD:/xk6" \
-              "$DOCKER_IMAGE_REPOSITORY" build master \
-              --with github.com/mostafa/xk6-kafka \
-              --with github.com/grafana/xk6-output-influxdb
-      - name: Check k6 binary
-        run: |
-            ./k6 version
-            ./k6 version | grep -qz 'xk6-output-influxdb.*xk6-kafka'
+          echo "Version=$(head -n 1 "${GITHUB_WORKSPACE}/.golangci.yml" | tr -d '# ')" >> $GITHUB_OUTPUT
+        id: version
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v3
+        with:
+          version: ${{ steps.version.outputs.Version }}
 
-      - name: Log into ghcr.io
-        if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          # Log into GitHub Container Registry
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login https://ghcr.io -u ${{ github.actor }} --password-stdin
-
-      - name: Publish master image to ghcr.io
-        if: ${{ github.ref == 'refs/heads/master' }}
-        run: |
-          echo "Publish as ghcr.io/$DOCKER_IMAGE_REPOSITORY:$VERSION"
-          docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/$DOCKER_IMAGE_REPOSITORY:master"
-          docker push "ghcr.io/$DOCKER_IMAGE_REPOSITORY:master"
-
-      - name: Publish tagged version image to ghcr.io
-        if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-        run: |
-          VERSION="${VERSION#v}"
-          echo "Publish as ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
-          docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
-          docker push "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:${VERSION}"
-          # We also want to tag the latest stable version as latest
-          if [[ ! "$VERSION" =~ (RC|rc) ]]; then
-            echo "Publish as ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
-            docker tag "$DOCKER_IMAGE_REPOSITORY" "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
-            docker push "ghcr.io/${DOCKER_IMAGE_REPOSITORY}:latest"
-          fi
-
-      # - name: Log into Docker Hub
-      #   if: ${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
-      #   run: |
-      #     # Log into Docker Hub Registry
-      #     echo "${{ secrets.DOCKER_PASS }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin
-      # - name: Publish k6:master image to Docker Hub
-      #   if: ${{ github.ref == 'refs/heads/master' }}
-      #   run: |
-      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:master and $LI_DOCKER_IMAGE_REPOSITORY:master"
-      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:master"
-      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:master"
-      #     docker push "$DOCKER_IMAGE_REPOSITORY:master"
-      #     docker push "$LI_DOCKER_IMAGE_REPOSITORY:master"
-      # - name: Publish tagged version image to Docker Hub
-      #   if: ${{ startsWith(github.ref, 'refs/tags/v') }}
-      #   run: |
-      #     # We need to push the same image in both the loadimpact and the grafana docker hub orgs
-      #     VERSION="${VERSION#v}"
-      #     echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:$VERSION and $LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:$VERSION"
-      #     docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
-      #     docker push "$DOCKER_IMAGE_REPOSITORY:$VERSION"
-      #     docker push "$LI_DOCKER_IMAGE_REPOSITORY:$VERSION"
-      #     # We also want to tag the latest stable version as latest
-      #     if [[ ! "$VERSION" =~ (RC|rc) ]]; then
-      #       echo "Publish to Docker Hub as $DOCKER_IMAGE_REPOSITORY:latest and $LI_DOCKER_IMAGE_REPOSITORY:latest"
-      #       docker tag "$DOCKER_IMAGE_REPOSITORY" "$DOCKER_IMAGE_REPOSITORY:latest"
-      #       docker tag "$DOCKER_IMAGE_REPOSITORY" "$LI_DOCKER_IMAGE_REPOSITORY:latest"
-      #       docker push "$DOCKER_IMAGE_REPOSITORY:latest"
-      #       docker push "$LI_DOCKER_IMAGE_REPOSITORY:latest"
-      #     fi
-
-  # goreleaser-check:
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - name: checkout
-  #       uses: actions/checkout@v3
-  #     - uses: goreleaser/goreleaser-action@v4
-  #       with:
-  #         version: v1.13.1
-  #         args: check
-  #       env:
-  #         TAG: ${{ steps.vars.outputs.short_sha }}
+  goreleaser-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v3
+      - uses: goreleaser/goreleaser-action@v4
+        with:
+          version: v1.13.1
+          args: check
+        env:
+          TAG: ${{ steps.vars.outputs.short_sha }}
